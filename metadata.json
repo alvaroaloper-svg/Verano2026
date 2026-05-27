@@ -1,0 +1,6 @@
+{
+  "name": "VERANO 2026",
+  "description": "Un verano para recordar - Planificador de viajes y eventos para junio, julio, agosto y septiembre de 2026.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
