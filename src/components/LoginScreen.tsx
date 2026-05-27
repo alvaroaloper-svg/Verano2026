@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { User, ScheduledEvent } from '../types';
-import { Lock, User as UserIcon, UserPlus, LogIn, AlertCircle, Sparkles, Eye, EyeOff } from 'lucide-react';
+import { Lock, User as UserIcon, UserPlus, LogIn, AlertCircle, Sparkles, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../firebase';
+import { INITIAL_EVENTS } from '../constants';
 
 interface LoginScreenProps {
   onLoginSuccess: (username: string, events: ScheduledEvent[]) => void;
@@ -8,6 +11,7 @@ interface LoginScreenProps {
 
 export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [isRegister, setIsRegister] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Fields state
   const [username, setUsername] = useState('');
@@ -19,57 +23,68 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Helper to load users from LocalStorage
-  const getUsersList = (): User[] => {
-    const saved = localStorage.getItem('cal2026_users');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  };
-
-  // Helper to save users to LocalStorage
-  const saveUsersList = (users: User[]) => {
-    localStorage.setItem('cal2026_users', JSON.stringify(users));
-  };
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!username.trim() || !password) {
+    const trimmedUser = username.trim();
+    if (!trimmedUser || !password) {
       setError('Por favor, rellena todos los campos.');
       return;
     }
 
-    const users = getUsersList();
-    const normalizedInputName = username.trim().toLowerCase();
+    setIsLoading(true);
+    const docId = trimmedUser.toLowerCase();
+    const docRef = doc(db, 'users', docId);
 
-    // Check if user exists matching username (case insensitive for easier entry)
-    const foundUser = users.find(u => u.username.trim().toLowerCase() === normalizedInputName);
+    try {
+      const docSnap = await getDoc(docRef);
 
-    if (!foundUser) {
-      setError('El usuario no existe. Regístrate de forma gratuita más abajo.');
-      return;
+      if (!docSnap.exists()) {
+        // Special login scaffolding for the requested default user 'Álvaro Alonso' / 'alvaro28'
+        if (docId === 'álvaro alonso' && password === 'alvaro28') {
+          const newUser: User = {
+            username: 'Álvaro Alonso',
+            passwordHash: 'alvaro28',
+            events: INITIAL_EVENTS
+          };
+          await setDoc(docRef, newUser);
+          
+          setSuccess('¡Bienvenido Álvaro! Cuenta inicializada con éxito.');
+          setTimeout(() => {
+            onLoginSuccess(newUser.username, newUser.events);
+          }, 800);
+          return;
+        }
+
+        setError('El usuario no existe. Regístrate de forma gratuita usando el botón de arriba.');
+        setIsLoading(false);
+        return;
+      }
+
+      const userData = docSnap.data() as User;
+
+      if (userData.passwordHash !== password) {
+        setError('Contraseña incorrecta. Por favor, inténtalo de nuevo.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Success login
+      setSuccess(`¡Bienvenido de vuelta, ${userData.username}!`);
+      setTimeout(() => {
+        onLoginSuccess(userData.username, userData.events);
+      }, 700);
+    } catch (err) {
+      setIsLoading(false);
+      setError('Error de conexión con el planificador en la nube.');
+      try {
+        handleFirestoreError(err, OperationType.GET, `users/${docId}`);
+      } catch (logErr) {}
     }
-
-    if (foundUser.passwordHash !== password) {
-      setError('Contraseña incorrecta. Por favor, inténtalo de nuevo.');
-      return;
-    }
-
-    // Success login
-    setSuccess(`¡Bienvenido de vuelta, ${foundUser.username}!`);
-    setTimeout(() => {
-      onLoginSuccess(foundUser.username, foundUser.events);
-    }, 600);
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -94,30 +109,43 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       return;
     }
 
-    const users = getUsersList();
-    const normalizedInputName = trimmedUser.toLowerCase();
+    setIsLoading(true);
+    const docId = trimmedUser.toLowerCase();
+    const docRef = doc(db, 'users', docId);
 
-    const alreadyExists = users.some(u => u.username.trim().toLowerCase() === normalizedInputName);
-    if (alreadyExists) {
-      setError('Este nombre de usuario ya está registrado.');
-      return;
+    try {
+      const docSnap = await getDoc(docRef);
+
+      if (docSnap.exists()) {
+        setError('Este nombre de usuario ya está registrado.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Default Álvaro Alonso gets all registered events if initialized during registration
+      const newUserEvents = docId === 'álvaro alonso' ? INITIAL_EVENTS : [];
+
+      // Create a new user with those initial events
+      const newUser: User = {
+        username: trimmedUser,
+        passwordHash: password,
+        events: newUserEvents
+      };
+
+      await setDoc(docRef, newUser);
+
+      setSuccess('¡Cuenta creada correctamente en la nube!');
+      
+      setTimeout(() => {
+        onLoginSuccess(newUser.username, newUser.events);
+      }, 800);
+    } catch (err) {
+      setIsLoading(false);
+      setError('Error al registrar la cuenta en la nube.');
+      try {
+        handleFirestoreError(err, OperationType.WRITE, `users/${docId}`);
+      } catch (logErr) {}
     }
-
-    // Create a new user with an empty set of events
-    const newUser: User = {
-      username: trimmedUser,
-      passwordHash: password,
-      events: [] // fresh new user starts hungry with empty calendar planner
-    };
-
-    const updatedUsers = [...users, newUser];
-    saveUsersList(updatedUsers);
-
-    setSuccess('¡Cuenta creada correctamente!');
-    
-    setTimeout(() => {
-      onLoginSuccess(newUser.username, newUser.events);
-    }, 800);
   };
 
   return (
@@ -271,9 +299,17 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           {/* SUBMIT BUTTON */}
           <button
             type="submit"
-            className="w-full flex items-center justify-center gap-2 text-xs font-display font-black uppercase tracking-widest bg-black text-white hover:bg-neutral-800 border-2 border-black py-4 px-4 rounded-none transition-all cursor-pointer shadow-[4px_4px_0px_0px_rgba(0,0,0,0.25)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] mt-2"
+            disabled={isLoading}
+            className={`w-full flex items-center justify-center gap-2 text-xs font-display font-black uppercase tracking-widest bg-black text-white hover:bg-neutral-800 border-2 border-black py-4 px-4 rounded-none transition-all cursor-pointer shadow-[4px_4px_0px_0px_rgba(0,0,0,0.25)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] active:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] mt-2 ${
+              isLoading ? 'opacity-70 cursor-not-allowed' : ''
+            }`}
           >
-            {isRegister ? (
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                Sincronizando...
+              </>
+            ) : isRegister ? (
               <>
                 <UserPlus className="w-4 h-4" />
                 Crear mi Cuenta de Planes
@@ -291,9 +327,9 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
       {/* Decorative subtitle in line with styling */}
       <div className="mt-6 flex items-center gap-1.5 text-[10px] font-mono text-slate-500 font-bold uppercase tracking-widest">
-        <span>Garantía de Privacidad Local</span>
+        <span>Garantía de Sincronización</span>
         <span>•</span>
-        <span>Cifrado de Sesión</span>
+        <span>Base de Datos Segura</span>
       </div>
     </div>
   );

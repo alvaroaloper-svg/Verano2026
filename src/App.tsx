@@ -5,6 +5,8 @@ import CalendarMonth from './components/CalendarMonth';
 import Sidebar from './components/Sidebar';
 import EventModal from './components/EventModal';
 import LoginScreen from './components/LoginScreen';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { db } from './firebase';
 import { 
   Calendar, 
   Sparkles, 
@@ -37,75 +39,45 @@ export default function App() {
   const [selectedEventForEdit, setSelectedEventForEdit] = useState<ScheduledEvent | null>(null);
   const [selectedDateForAdd, setSelectedDateForAdd] = useState<string | null>(null);
 
-  // Load events and user accounts from LocalStorage on mount
+  // Load events and user accounts on mount via Cloud Firestore if user was logged in
   useEffect(() => {
-    // 1. Determine local default demo events
-    let startingEvents = INITIAL_EVENTS;
-    const legacySaved = localStorage.getItem('cal2026_events');
-    if (legacySaved) {
-      try {
-        startingEvents = JSON.parse(legacySaved);
-      } catch (e) {}
-    }
-
-    // 2. Load or setup users list
-    const savedUsersStr = localStorage.getItem('cal2026_users');
-    let usersList = [];
-    if (savedUsersStr) {
-      try {
-        usersList = JSON.parse(savedUsersStr);
-      } catch (e) {}
-    }
-
-    // Build default user Álvaro Alonso if not exists
-    const defaultUserExists = usersList.some(
-      (u: any) => u.username.trim().toLowerCase() === 'álvaro alonso'
-    );
-
-    if (!defaultUserExists) {
-      const defaultUser = {
-        username: 'Álvaro Alonso',
-        passwordHash: 'alvaro28',
-        events: startingEvents
-      };
-      usersList.push(defaultUser);
-      localStorage.setItem('cal2026_users', JSON.stringify(usersList));
-    }
-
-    // 3. Check for existing active session
-    const activeSession = localStorage.getItem('cal2026_current_user');
-    if (activeSession) {
-      const foundUser = usersList.find(
-        (u: any) => u.username.trim().toLowerCase() === activeSession.trim().toLowerCase()
-      );
-      if (foundUser) {
-        setCurrentUser(foundUser.username);
-        setEvents(foundUser.events);
+    async function initSession() {
+      const activeSession = localStorage.getItem('cal2026_current_user');
+      if (activeSession) {
+        const docId = activeSession.trim().toLowerCase();
+        try {
+          const docRef = doc(db, 'users', docId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            const userData = docSnap.data();
+            setCurrentUser(userData.username);
+            setEvents(userData.events || []);
+          } else {
+            // Cleans stale local session identifier
+            localStorage.removeItem('cal2026_current_user');
+          }
+        } catch (e) {
+          console.error('Error fetching user profile from Cloud Firestore on mount', e);
+        }
       }
+      setIsLoadingSession(false);
     }
-    setIsLoadingSession(false);
+    initSession();
   }, []);
 
-  // Sync state modifications directly to LocalStorage under user account key
-  const saveEvents = (newEvents: ScheduledEvent[]) => {
+  // Sync state modifications directly to Cloud Firestore database under user directory
+  const saveEvents = async (newEvents: ScheduledEvent[]) => {
     setEvents(newEvents);
-    localStorage.setItem('cal2026_events', JSON.stringify(newEvents)); // legacy fallback
     
     if (currentUser) {
-      const savedUsersStr = localStorage.getItem('cal2026_users');
-      if (savedUsersStr) {
-        try {
-          const usersList = JSON.parse(savedUsersStr);
-          const updatedUsers = usersList.map((u: any) => {
-            if (u.username.toLowerCase() === currentUser.toLowerCase()) {
-              return { ...u, events: newEvents };
-            }
-            return u;
-          });
-          localStorage.setItem('cal2026_users', JSON.stringify(updatedUsers));
-        } catch (e) {
-          console.error('Error saving updated events list for user', e);
-        }
+      const docId = currentUser.trim().toLowerCase();
+      try {
+        const docRef = doc(db, 'users', docId);
+        await updateDoc(docRef, {
+          events: newEvents
+        });
+      } catch (e) {
+        console.error('Failed to sync updated events with Cloud Firestore', e);
       }
     }
   };

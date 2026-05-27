@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Contains user details and all associated scheduled summer events.",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string"
+        },
+        "passwordHash": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array"
+        }
+      },
+      "required": ["username", "passwordHash", "events"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of planificador users, where each document ID is a normalized lowercased username."
+    }
+  }
+}
